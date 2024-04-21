@@ -29,6 +29,7 @@ step2:
     or eax, 0x1
     mov cr0, eax
     jmp CODE_SEG:load32
+    jmp $
 
 
 ; GDT
@@ -62,21 +63,60 @@ gdt_descriptor:
 
 [BITS 32]
 load32:
-    mov ax, DATA_SEG
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
-    mov ebp, 0x00200000
-    mov esp, ebp
+    mov eax, 1 ; want to load from sector 1
+    mov ecx, 100 ; want to load 100 sectors
+    mov edi, 0x0100000 ; address to load into
+    call ata_lba_read
+    jmp CODE_SEG:0x0100000
 
-    ; Enable A20 Line
-    in al, 0x92
-    or al, 2
-    out 0x92, al
+ata_lba_read:
+    mov ebx, eax
+    shr eax, 24 ; Shift 24 bits to the right
+    or eax, 0xE0 ; Select the master drive
+    mov dx, 0x1F6 ; Port to write bits to
+    out dx, al ; Talking to the I/O bus
 
-    jmp $
+    ; Send the total sectors to read
+    mov eax, ecx
+    mov dx, 0x1F2
+    out dx, al
+
+    mov eax, ebx ; Restore eax
+    mov dx, 0x1F3
+    out dx, al
+
+    mov dx, 0x1F4
+    mov eax, ebx
+    shr eax, 8
+    out dx, al
+
+    mov dx, 0x1F5
+    mov eax, ebx
+    shr eax, 16
+    out dx, al
+    ; Finished sending bits of LBA
+
+    mov dx, 0x1f7
+    mov al, 0x20
+    out dx, al
+
+.next_sector: ; Read all sectors in to memory
+    push ecx
+
+.try_again: ; Check if we need to read
+    mov dx, 0x1f7 ; Read from port 0x1f7 into al
+    in al, dx
+    test al, 8
+    jz .try_again
+
+    ; Read 256 words at a time
+    mov ecx, 256
+    mov dx, 0x1F0
+    rep insw ; Reading from port in dx and storing in mem address in edi, repeats ecx=256 times
+    pop ecx
+    loop .next_sector
+    ; End of reading sectors
+    ret
 
 
 times 510-($ - $$) db 0 
